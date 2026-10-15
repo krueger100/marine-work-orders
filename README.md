@@ -19,7 +19,7 @@ The sticky bar at the top is the mock login: **1 · Vessel → 2 · Role → 3 �
 4. **Admin:** Role *Admin* → *Morgan Hale*. Under **Users**, try to deactivate *Noah Williams* while he holds active work: it is refused with a reason. Under **Vessels**, try to deactivate *MV Keys Voyager* (it has open work), and under **Users** its only captain, *Daniel Mercer*. Choose **All vessels (Admins)** in the vessel selector for a fleet-wide view.
 5. **Scale:** select *MV Atlas Endurance (load test)*: 50,000 work orders, paginated and filterable without slowing down.
 
-Changed too much? **Users → Reset demo data** (Admins) rebuilds the demo fleet.
+Changed too much? **Users → Reset demo data** (Admins) rebuilds the demo fleet, at most once every 10 minutes.
 
 ---
 
@@ -50,10 +50,19 @@ The assessment prefers the **browser-side Supabase client**, so there is no serv
 | What you can **read** | RLS on every table. Admin: everything. Captain: their vessels. Crew: only work orders assigned to them, on vessels they still serve on. |
 | What you can **write** | Nothing directly: `INSERT/UPDATE/DELETE` are revoked from API roles on every table. All changes go through `SECURITY DEFINER` functions that check role, vessel membership and current status in one transaction. |
 | Data rules | `CHECK` constraints, unique indexes and foreign keys. Functions translate violations into friendly messages; the UI's zod schemas only mirror them for instant feedback. |
+| Function permissions | API roles can execute only the RPCs the app calls, plus the three identity helpers RLS needs; `anon` can execute nothing. A test asserts this exact list. |
+| Probing other vessels | A work order the caller may not see is reported exactly like one that does not exist (*Work order not found.*), so ids on other vessels cannot be discovered through error messages. |
 | SQL injection | No dynamic SQL anywhere: PostgREST and `rpc()` parameterize every value, and every function uses `set search_path = ''` with schema-qualified names. |
-| Personal data | The member switcher calls `list_directory()`, which returns only id, name, role and vessel ids (no emails). |
+| Data exposure | The member switcher calls `list_directory()`, which returns only id, name, role and vessel ids (no emails). See the limitations below: on this demo anyone can act as an Admin. |
 
-Swapping the mock for real authentication would only change the three identity helpers; every policy and function stays the same.
+Replacing the mock with real authentication is contained in the session layer: the identity lookups (`private.current_member_id/role/vessel_ids`, `private.require_member`, `public.whoami`) would map `auth.uid()` to a member instead of reading `private.acting_sessions`, and `act_as` / `list_directory` would go. The RLS policies and every workflow function stay the same.
+
+### Security model and known limitations
+
+- **Identity is self-asserted, by design.** The brief asks for a mock login, so any visitor can act as any active member, including an Admin. What a member may do is enforced by the database; *who* you are is not verified. This is not production-ready authentication.
+- **Reviewers share one live database.** Admin actions (deactivating users, resetting data) affect everyone. Reset demo data has a 10-minute cooldown; concurrent requests queue on a locked row, so it cannot be bypassed.
+- **Anonymous sessions.** Every browser tab signs in anonymously and creates a Supabase user; Supabase rate-limits these per IP and there is no CAPTCHA. If a stored session is rejected (revoked, tampered or expired beyond refresh), the tab starts a fresh one and acts as the same member again.
+- **Concurrency.** Transitions lock the work order row; locks are always taken member rows before vessel rows, so concurrent edits and deactivations queue instead of deadlocking. A reset truncates the work-order tables, so a list loaded at that exact moment can briefly come back empty (`TRUNCATE` is not MVCC-safe); members and sessions are cleared with `DELETE`, so sessions are never affected.
 
 ---
 
@@ -155,7 +164,7 @@ stateDiagram-v2
   state "Done + attested" as Attested
 ```
 
-Each transition locks the row (`FOR UPDATE`) and checks the current status, so double clicks, stale screens and two tabs cannot corrupt a record. Every transition is written to `work_order_events`.
+Each transition locks the row (`FOR UPDATE`) and checks the current status, so double clicks, stale screens and two tabs cannot corrupt a record. Every transition is written to `work_order_events`. Callers who cannot see a work order get *Work order not found.*, the same answer as for an id that does not exist.
 
 ---
 
@@ -174,7 +183,7 @@ Each transition locks the row (`FOR UPDATE`) and checks the current status, so d
 | Deleting data. | Nothing is ever hard-deleted. Users and vessels are deactivated, so history stays intact. Assignments of an inactive user are kept but ignored, so reactivating restores them. |
 | Duplicates. | Users: unique email (case-insensitive). Vessels: unique IMO number (with a valid check digit) and unique name. |
 | Mock auth without Email Auth. | Supabase **anonymous sign-in** gives each tab a real JWT, so policies can identify the caller without any login screen. Each tab has its own session (sessionStorage), so different tabs can act as different members. |
-| Reviewers share one live database. | Admin-only **Reset demo data** rebuilds everything; sessions acting as seeded members survive the reset. |
+| Reviewers share one live database. | Admin-only **Reset demo data** rebuilds everything, at most once every 10 minutes; sessions acting as seeded members survive the reset. |
 | Demo data. | All names, `.test` emails and IMO numbers are fictional. |
 
 ---
@@ -192,9 +201,9 @@ Each transition locks the row (`FOR UPDATE`) and checks the current status, so d
   | First page of a crew member's own work orders | 1.5 ms |
   | Exact count over 50,000 rows | 12–20 ms |
   | Dashboard counters (`work_order_stats`) | 14–23 ms |
-  | Page 1,000 (offset 25,000) | 34 ms |
+  | Page 1,000 (offset 25,000) | 34–38 ms |
 
-  In the browser, each request takes 110–190 ms end to end, mostly network.
+  In the browser, each request took 110–190 ms end to end, mostly network latency, measured from Southeast Asia to the Tokyo-hosted database; expect more from other regions.
 - **Title search** is an `ILIKE` filter over the rows the caller may see (~80 ms across all 50,000). A trigram index would not help: under RLS Postgres only uses an index for *leakproof* operators, and `ILIKE` is not one. At larger scale the next step is a search function that applies the same vessel checks explicitly, plus keyset pagination for very deep pages.
 - **RLS written for speed:** helper calls are wrapped as `(select private.current_member_role())` so Postgres evaluates them once per query (an InitPlan) instead of once per row; membership checks use hashed `IN (subquery)` lookups.
 - **Client cache:** TanStack Query, keyed by acting member, so switching members never shows another member's data and switching back is instant. Previous page stays on screen while the next one loads.
@@ -210,15 +219,17 @@ The database is the security boundary, so it is tested directly. Every test runs
 npm run test:db
 ```
 
-**31 tests, all passing** against the live schema: `rls.test.mjs` (11), `work-orders.test.mjs` (10), `admin.test.mjs` (10).
+**36 tests:** `rls.test.mjs` (11), `work-orders.test.mjs` (10), `admin.test.mjs` (10), `hardening.test.mjs` (5).
 
-Coverage includes: anonymous requests are refused everything; RLS visibility per role (crew only their own, captains only their vessels, admins everything, history follows its work order); direct table writes refused for every role including Admin; the private schema is closed; the full lifecycle including reject → redo → attest by a second captain; every wrong turn (wrong role, wrong vessel, wrong crew, skipping a status, missing solution, missing rejection reason, editing an attested record); reassignment moving visibility; validation and case-insensitive duplicates; IMO check digits; every deactivation/removal/role-change guard; last-Admin protection.
+Coverage includes: anonymous requests are refused everything; RLS visibility per role (crew only their own, captains only their vessels, admins everything, history follows its work order); direct table writes refused for every role including Admin; the private schema is closed; the exact set of functions API roles may execute; the full lifecycle including reject → redo → attest by a second captain; every wrong turn (wrong role, wrong vessel, wrong crew, skipping a status, missing solution, missing rejection reason, editing an attested record); hidden work orders answering exactly like missing ones; reassignment moving visibility; validation and case-insensitive duplicates; IMO check digits; every deactivation/removal/role-change guard; last-Admin protection; the reset cooldown; and, on two real connections, lock ordering and the absence of the create-versus-deactivate deadlock.
+
+> **Run the suite against a development project, not production.** Data changes are rolled back, but tests still use up work-order ID numbers, and the cooldown and concurrency tests briefly hold locks on the demo tables. The concurrency tests need a real Postgres server with several connections (any Supabase project qualifies).
 
 ---
 
 ## Running locally
 
-Requirements: Node 20+ and a Supabase project (the free tier is fine).
+Requirements: Node 22+ and a Supabase project (the free tier is fine).
 
 1. In the Supabase dashboard: **Authentication → Sign In / Providers → enable "Allow anonymous sign-ins"**.
 2. `cp .env.example .env.local` and fill in the project URL, publishable key and the **Session pooler** connection string (Connect → Connection string).
@@ -228,7 +239,8 @@ Requirements: Node 20+ and a Supabase project (the free tier is fine).
 npm install
 npm run db:push     # apply supabase/migrations
 npm run db:seed     # demo fleet + 50,000 load-test work orders
-npm run test:db     # database permission + workflow tests
+npm run test:db     # database permission + workflow tests (development project only)
+npm run typecheck   # generates Next.js route types, then runs tsc
 npm run dev
 ```
 
@@ -242,7 +254,7 @@ Vercel production deployment (`vercel deploy --prod`) of the `master` branch, se
 
 ```
 supabase/
-  migrations/      ordered SQL: schema → access control → RPCs → demo data → privileges
+  migrations/      ordered SQL: schema → access control → RPCs → demo data → privileges → hardening
   schema.sql       generated single-file schema (npm run db:schema)
   seed.sql         select private.seed_demo_data(50000);
 tests/db/          node:test suites run against the real database (rolled back)
@@ -265,5 +277,6 @@ src/
 ## What I would do next
 
 - Supabase Realtime on `work_orders` so a captain sees crew updates without refocusing the tab.
-- pgTAP tests in CI against a disposable database (the current suite needs a database URL).
-- Real authentication (Supabase Auth with SSO) replacing the anonymous-session bridge; only the three identity helpers change.
+- Database tests in CI against a disposable database, plus Playwright end-to-end tests for the main flows (the current suite covers the database, which is the security boundary).
+- Real authentication (Supabase Auth with SSO) replacing the anonymous-session bridge; only the identity lookups described above change.
+- Keyset pagination for very deep pages, and a search function that applies the vessel checks explicitly so title search can use an index.
