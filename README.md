@@ -170,21 +170,106 @@ Each transition locks the row (`FOR UPDATE`) and checks the current status, so d
 
 ## Assumptions & decisions
 
-| Question the spec leaves open | Decision |
-| --- | --- |
-| Statuses must be exactly Open / In Progress / Done, but there is also "Attest". | Status stays three-valued. Attestation is a separate fact on a Done record (`attested_at/by`) that makes it final. The UI shows *Done · Awaiting review* or *Done · Attested*. |
-| Where does a rejected work order go? | Back to **In Progress** for the same crew member, with the reason shown to them and kept in the history. |
-| Are Admins on vessels? | No. Admins are fleet-wide: they appear under the Admin role for every vessel, and only Admins get the **All vessels** option. Promoting someone to Admin removes their vessel assignments. |
-| Is a role per user or per vessel? | Per user. A user's vessels are many-to-many (crew can serve on several vessels). |
-| How many captains per vessel? | Any number. **Any active captain of the vessel** may review its work orders, not just the creator. |
-| Crew visibility. | Crew see only work orders assigned to them, and only while they still serve on that vessel. |
-| Can Admins act on work orders? | Read-only. The lifecycle belongs to Captains and Crew. |
-| "Deactivation must not leave an invalid assignment or active work order without an authorized owner." | An *active* work order is any not yet attested. Refused: deactivating, re-roling or removing **crew** who hold active work orders on the affected vessel(s); doing the same to **the last active captain** of a vessel with active work orders (nobody could review them); deactivating a **vessel** with active work orders; deactivating or demoting the **last active Admin**; an Admin deactivating **themselves**. A captain can **reassign** work to free a crew member. |
-| Deleting data. | Nothing is ever hard-deleted. Users and vessels are deactivated, so history stays intact. Assignments of an inactive user are kept but ignored, so reactivating restores them. |
-| Duplicates. | Users: unique email (case-insensitive). Vessels: unique IMO number (with a valid check digit) and unique name. |
-| Mock auth without Email Auth. | Supabase **anonymous sign-in** gives each tab a real JWT, so policies can identify the caller without any login screen. Each tab has its own session (sessionStorage), so different tabs can act as different members. |
-| Reviewers share one live database. | Admin-only **Reset demo data** rebuilds everything, at most once every 10 minutes; sessions acting as seeded members survive the reset. |
-| Demo data. | All names, `.test` emails and IMO numbers are fictional. |
+The brief leaves several things open. Four principles decided most of them:
+
+1. **Follow the brief literally where it is explicit.** Where it is open, choose the reading that would hold up on a real fleet.
+2. **The database is the authority.** Every rule below is enforced in Postgres; the UI only mirrors it.
+3. **A maintenance record is an audit trail.** Nothing is hard-deleted, and every step of a work order is logged with who and when.
+4. **Work is never stranded.** Every active work order always has a crew member who can do it and a captain who can review it.
+
+### Mock authentication
+
+**How can the database enforce permissions without Email Auth?**
+- **Decision:** every browser tab signs in with Supabase **anonymous sign-in**, which issues a real signed JWT without a login screen. `act_as(member)` records which member that anonymous user acts as, in `private.acting_sessions`.
+- **Why:** policies need an identity the database can read on every request. With a real JWT, `auth.uid()` works in RLS and in every function, and they all read the acting member from the same server-side table.
+- **Considered:** sending the chosen member's id in a request header that policies read. Rejected: every policy would trust a value the client sets on each request, and moving to real login would mean rewriting them all. With a JWT the policies already use `auth.uid()`, so real authentication later only changes how that maps to a member (see the limitations above).
+
+**Is the session per browser or per tab?**
+- **Decision:** per tab (`sessionStorage`).
+- **Why:** a reviewer can watch a Captain and a Crew member side by side in two tabs, which is the quickest way to see the whole workflow.
+- **Trade-off:** every new tab creates an anonymous Supabase user.
+
+**How do the three dropdowns treat Admins, who "may view and manage all vessels"?**
+- **Decision:** Admins are listed under the Admin role for every vessel, and only the Admin role offers **All vessels**. The dropdowns list active members only. Changing the vessel keeps the role and member if they are still valid there, and otherwise picks the first valid option.
+- **Why:** Admins do not serve on a ship, so tying them to one vessel's list would hide them. The fleet-wide option makes "view all vessels" literal, and the dropdowns can never offer someone who could not act on the selected vessel.
+
+### Roles and vessels
+
+**Is a role per user or per vessel?**
+- **Decision:** per user. A user's vessels are many-to-many.
+- **Why:** Role Management in the brief assigns a role to a *user*, and on a fleet rank belongs to the person. Vessels are many-to-many because crew rotate between ships and a relief captain may cover several.
+- **Considered:** a role per assignment (captain on one ship, crew on another). It is more flexible, but nothing in the brief needs it and it would complicate every permission check.
+
+**Are Admins assigned to vessels?**
+- **Decision:** no. Admins are fleet-wide and cannot be assigned; promoting someone to Admin removes their vessel assignments.
+- **Why:** Admin is an office role that already sees the whole fleet, so a vessel assignment would add nothing and would make that vessel's roster misleading.
+
+**What does "an available Crew member under their command" mean?**
+- **Decision:** the captain must be assigned to the vessel ("their command"). The crew member must be active, have the Crew role and serve on that vessel ("available"). The same check runs when a captain reassigns work.
+- **Why:** it is the literal reading, and it needs no data the brief does not define. Availability in the sense of workload or shifts would need rosters the brief never mentions.
+
+**How many captains can a vessel have, and which of them reviews?**
+- **Decision:** any number. Any active captain of the vessel can reassign, attest or reject its work orders, not only the captain who created them.
+- **Why:** captains rotate and take leave. If only the creator could review, one captain going ashore would leave every Done work order on that ship stuck.
+
+**Who sees which work orders?**
+- **Decision:** Admins see everything. Captains see every work order on the vessels they command, including other captains'. Crew see only work orders assigned to them, and only while they still serve on that vessel.
+- **Why:** least privilege. Captains share responsibility for the ship, so they need the full picture. Crew need only their own tasks, and removing someone from a ship removes their access to its records.
+
+**Can Admins act on work orders?**
+- **Decision:** no, they are read-only.
+- **Why:** the brief gives the lifecycle to Captains and Crew only. Keeping the office out of it separates duties: if an Admin could attest, the captain's sign-off could be bypassed.
+
+### Work order lifecycle
+
+**The statuses must be exactly Open / In Progress / Done, but captains also "Attest". Where does attestation go?**
+- **Decision:** status stays three-valued. Attestation is a separate fact on a Done record (`attested_at`, `attested_by`) that makes it final. The UI shows *Done · Awaiting review* or *Done · Attested*.
+- **Why:** the brief says "strictly", so a fourth status would break an explicit rule. Attestation is a sign-off *about* finished work rather than a further stage of it, so it fits as a fact on Done. A constraint guarantees that only a Done record can be attested.
+
+**Where does a rejected work order go?**
+- **Decision:** back to **In Progress** for the same crew member. A reason of at least 5 characters is required, the crew member sees it, and every rejection stays in the history.
+- **Why:** "send it back to assigned crew" names the same person, who already has the context. It returns to In Progress rather than Open because the work has started. Reasons live in the append-only `work_order_events` table, so a second rejection never overwrites the first; the latest reason is also kept on the work order for display.
+
+**"Solution (optional until filled)": when is it required?**
+- **Decision:** not when creating a work order. Crew can save a draft solution while it is In Progress, and a solution is required to mark it Done (a database constraint).
+- **Why:** a captain cannot review work that has no recorded solution, so "until filled" is read as "until the work is finished".
+
+**What should the Work Order ID look like?**
+- **Decision:** a sequential number shown as `WO-000123`.
+- **Why:** crews quote work order numbers in handovers, logbooks and over the radio, where a short number works and a UUID does not. The number is not a secret: visibility is enforced by RLS, and an id the caller may not see answers exactly like one that does not exist. The 50,000 load-test records use ids from 900001, so real work orders keep a short sequence.
+
+**Can a work order be edited after it is created?**
+- **Decision:** a captain can reassign it while it is Open or In Progress, and the change is logged. The title and issue are fixed. An attested work order cannot change at all.
+- **Why:** the brief lists no edit operation, and keeping the original request fixed keeps the record honest: the issue as reported is what the crew answered and the captain attested. A logged, captain-only edit while Open would be the next step.
+
+### Deactivation and data integrity
+
+**"Prevent deactivation when it would leave an invalid assignment or active work order without an authorized owner": what counts?**
+- **Decision:** an *active* work order is any not yet attested, including Done ones awaiting review. Each needs two owners: the crew member doing it and a captain who can review it. These are refused, each with the reason and the fix:
+  - deactivating, re-roling or removing from a vessel a **crew member** who holds active work orders there (a captain must reassign them first);
+  - doing the same to the **last active captain** of a vessel with active work orders (nobody could review them);
+  - deactivating a **vessel** with active work orders;
+  - deactivating or demoting the **last active Admin**, or an Admin deactivating **themselves**.
+- **Why:** role changes and vessel removals end someone's authority just as deactivation does, so they run the same check.
+- **Considered:** reassigning the work automatically. Rejected: it would silently make a decision that belongs to a captain.
+
+**Can anything be deleted?**
+- **Decision:** no. Users and vessels are deactivated. An inactive user's vessel assignments are kept but ignored, so reactivating restores them. A deactivated vessel leaves the selectors and its captains and crew lose access to it, while Admins keep its full history.
+- **Why:** work orders point to the people who created, did and attested them, and to their ship. Deleting either would erase who did what.
+
+**What counts as a duplicate?**
+- **Decision:** users with the same email, ignoring case. Vessels with the same IMO number, or the same name ignoring case. IMO numbers must also have a valid check digit.
+- **Why:** an email identifies a person. A ship keeps its IMO number for life, even when it is renamed, and the check digit catches typos. Names are unique too, so the vessel selector is never ambiguous. Required fields and formats are database constraints; the forms only mirror them for instant feedback.
+
+### The demo environment
+
+**Reviewers share one live database. How is it kept usable?**
+- **Decision:** an Admin-only **Reset demo data** rebuilds the demo fleet, at most once every 10 minutes. Tabs acting as a seeded member stay signed in as that member after a reset.
+- **Why:** one reviewer's deactivations should not spoil the next reviewer's tour, and the cooldown stops a single visitor from repeatedly wiping everyone else's work.
+
+**What data is in the demo?**
+- **Decision:** a small fleet with fictional names, `.test` email addresses and fictional IMO numbers, plus a load-test vessel with 50,000 work orders.
+- **Why:** there is no real personal data (`.test` is a reserved domain, so no mail can reach anyone), and the load-test vessel backs the performance claims with measured numbers.
 
 ---
 
