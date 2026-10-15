@@ -109,7 +109,24 @@ export function UsersAdmin() {
             ))}
           </div>
         ) : members.data.rows.length === 0 ? (
-          <EmptyState title="No users found">Try a different search or filter.</EmptyState>
+          <EmptyState
+            title="No users found"
+            action={
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setSearch("");
+                  setRole("all");
+                  setStatus("active");
+                }}
+              >
+                Clear filters
+              </Button>
+            }
+          >
+            Nothing matches the current search or filters.
+          </EmptyState>
         ) : (
           <>
             <ul className="divide-y divide-slate-100">
@@ -120,7 +137,7 @@ export function UsersAdmin() {
                       {m.full_name}
                       <RoleBadge role={m.role} />
                       {!m.is_active && <ActiveBadge active={false} />}
-                      {m.id === me.id && <span className="text-xs font-normal text-slate-400">(you)</span>}
+                      {m.id === me.id && <span className="text-xs font-normal text-slate-500">(you)</span>}
                     </p>
                     <p className="truncate text-sm text-slate-500">{m.email}</p>
                     <p className="mt-0.5 text-xs text-slate-500">

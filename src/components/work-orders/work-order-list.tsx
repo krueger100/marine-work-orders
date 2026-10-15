@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { StatusBadges } from "@/components/ui/badges";
+import { Button } from "@/components/ui/button";
 import { Pagination } from "@/components/ui/pagination";
 import { EmptyState, ErrorState, Skeleton } from "@/components/ui/states";
 import { errorMessage } from "@/lib/api/errors";
@@ -19,11 +20,15 @@ interface WorkOrderListProps {
   onPageChange: (page: number) => void;
   onOpen: (id: number) => void;
   emptyHint: string;
+  /** True when a status filter or search is narrowing the list. */
+  filtered: boolean;
+  onClearFilters: () => void;
 }
 
 /** Table on wide screens, cards on phones; both open the detail sheet. */
 export function WorkOrderList(props: WorkOrderListProps) {
-  const { result, loading, fetching, error, onRetry, showVessel, showAssignee, onOpen, emptyHint } = props;
+  const { result, loading, fetching, error, onRetry, showVessel, showAssignee, onOpen, emptyHint, filtered, onClearFilters } =
+    props;
 
   if (error && !result) return <ErrorState message={errorMessage(error)} onRetry={onRetry} />;
   if (loading && !result) {
@@ -36,7 +41,20 @@ export function WorkOrderList(props: WorkOrderListProps) {
     );
   }
   if (!result || result.rows.length === 0) {
-    return <EmptyState title="No work orders">{emptyHint}</EmptyState>;
+    return filtered ? (
+      <EmptyState
+        title="No matching work orders"
+        action={
+          <Button variant="secondary" size="sm" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        }
+      >
+        Nothing matches the current status filter or search.
+      </EmptyState>
+    ) : (
+      <EmptyState title="No work orders">{emptyHint}</EmptyState>
+    );
   }
 
   return (
@@ -48,7 +66,7 @@ export function WorkOrderList(props: WorkOrderListProps) {
             <button type="button" onClick={() => onOpen(wo.id)} className="w-full space-y-1.5 px-4 py-3 text-left hover:bg-slate-50">
               <span className="flex items-center justify-between gap-2">
                 <span className="font-mono text-xs text-slate-500">{formatWorkOrderId(wo.id)}</span>
-                <span className="text-xs text-slate-400">{formatRelative(wo.updated_at)}</span>
+                <span className="text-xs text-slate-500">{formatRelative(wo.updated_at)}</span>
               </span>
               <span className="block font-medium text-slate-900">{wo.title}</span>
               <StatusBadges status={wo.status} attestedAt={wo.attested_at} rejectionCount={wo.rejection_count} />

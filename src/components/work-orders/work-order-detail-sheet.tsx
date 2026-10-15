@@ -89,7 +89,7 @@ function WorkOrderDetailBody({ wo }: { wo: WorkOrderDetail }) {
                 <p className="text-slate-800">
                   <span className="font-medium">{EVENT_LABELS[e.event_type]}</span>
                   {e.actor && <> by {e.actor.full_name}</>}
-                  <span className="text-slate-400"> · {formatDateTime(e.created_at)}</span>
+                  <span className="text-slate-500"> · {formatDateTime(e.created_at)}</span>
                 </p>
                 {e.comment && <p className="mt-0.5 whitespace-pre-wrap text-slate-600">{e.comment}</p>}
               </li>

@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 
 interface DialogProps {
   open: boolean;
@@ -22,6 +22,8 @@ interface DialogProps {
  */
 export function Dialog({ open, onClose, title, description, children, footer, variant = "center", size = "md" }: DialogProps) {
   const ref = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
   // Close on a backdrop click only if the press also started on the backdrop,
   // so selecting text and releasing outside the panel never closes it.
   const pressStartedOnBackdrop = useRef(false);
@@ -36,6 +38,8 @@ export function Dialog({ open, onClose, title, description, children, footer, va
   return (
     <dialog
       ref={ref}
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       onClose={onClose}
       onPointerDown={(event) => {
         pressStartedOnBackdrop.current = event.target === ref.current;
@@ -60,8 +64,14 @@ export function Dialog({ open, onClose, title, description, children, footer, va
         >
           <header className="flex items-start gap-3 border-b border-slate-200 px-5 py-4">
             <div className="min-w-0 flex-1">
-              <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-              {description && <div className="mt-0.5 text-sm text-slate-500">{description}</div>}
+              <h2 id={titleId} className="text-lg font-semibold text-slate-900">
+                {title}
+              </h2>
+              {description && (
+                <div id={descriptionId} className="mt-0.5 text-sm text-slate-500">
+                  {description}
+                </div>
+              )}
             </div>
             <button
               type="button"

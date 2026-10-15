@@ -67,7 +67,7 @@ export function VesselRosterDialog({ vessel, onClose }: { vessel: VesselSummary;
               <li key={m.id} className="flex items-center gap-3 px-3 py-2">
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {m.full_name}
-                  {!m.is_active && <span className="ml-1 text-xs text-slate-400">(inactive)</span>}
+                  {!m.is_active && <span className="ml-1 text-xs text-slate-500">(inactive)</span>}
                 </span>
                 <RoleBadge role={m.role} />
                 <Button

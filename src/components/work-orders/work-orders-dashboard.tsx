@@ -91,6 +91,11 @@ export function WorkOrdersDashboard() {
           pageSize={WORK_ORDER_PAGE_SIZE}
           onPageChange={(next) => setPageState({ key: listKey, page: next })}
           onOpen={(id) => setOpened({ memberId: member.id, id })}
+          filtered={filter !== "all" || debouncedSearch.trim() !== ""}
+          onClearFilters={() => {
+            setFilter("all");
+            setSearch("");
+          }}
           emptyHint={
             member.role === "Captain"
               ? "Create a work order to get your crew started."
@@ -129,13 +134,12 @@ const FILTERS: { value: WorkOrderFilter; label: string }[] = [
 
 function FilterTabs({ value, onChange }: { value: WorkOrderFilter; onChange: (value: WorkOrderFilter) => void }) {
   return (
-    <div role="tablist" aria-label="Filter by status" className="-mx-1 flex gap-1 overflow-x-auto px-1">
+    <div role="group" aria-label="Filter by status" className="-mx-1 flex gap-1 overflow-x-auto px-1">
       {FILTERS.map((f) => (
         <button
           key={f.value}
           type="button"
-          role="tab"
-          aria-selected={value === f.value}
+          aria-pressed={value === f.value}
           onClick={() => onChange(f.value)}
           className={
             value === f.value

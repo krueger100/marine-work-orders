@@ -128,7 +128,7 @@ export function MemberFormDialog({ member, onClose }: Props) {
                     onChange={(e) => toggleVessel(v.id, e.target.checked)}
                   />
                   <span className="min-w-0 flex-1 truncate">{v.name}</span>
-                  {!v.is_active && <span className="text-xs text-slate-400">inactive</span>}
+                  {!v.is_active && <span className="text-xs text-slate-500">inactive</span>}
                 </label>
               ))}
             </div>
