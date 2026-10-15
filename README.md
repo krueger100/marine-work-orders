@@ -2,7 +2,7 @@
 
 A vessel-scoped work order dashboard for a cruise fleet: Admins manage users, roles, vessels and assignments; Captains create and review work orders; Crew carry them out. Every permission is enforced **inside Postgres**, not only in the UI.
 
-- **Live demo:** _LIVE_URL_ (no login needed)
+- **Live demo:** https://marine-work-orders.vercel.app (no login needed)
 - **Stack:** Next.js 16 (App Router) · TypeScript · Supabase (Postgres, RLS, RPC) · TanStack Query · Tailwind CSS 4 · Vercel
 
 ---
@@ -236,7 +236,7 @@ npm run dev
 
 ## Deployment
 
-Vercel, production branch `main`. A daily Vercel Cron (`/api/keep-alive`) makes one authenticated query so the free Supabase project is never paused for inactivity while the submission is being reviewed.
+Vercel production deployment (`vercel deploy --prod`) of the `master` branch, served at https://marine-work-orders.vercel.app. The database is a Supabase project on the free tier. A daily Vercel Cron (`/api/keep-alive`, protected by `CRON_SECRET`) makes one authenticated query so the project is never paused for inactivity while the submission is being reviewed.
 
 ## Project structure
 
