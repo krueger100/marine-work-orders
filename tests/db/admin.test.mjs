@@ -35,7 +35,8 @@ test('only Admins can call the management functions', () =>
     await s.fails('select public.create_member($1, $2, $3)', ['A B', 'a@b.test', 'Crew'], denied);
     await s.fails('select public.update_member($1, $2, $3, $4)', [M.noah, 'Noah', 'noah@x.test', 'Captain'], denied);
     await s.fails('select public.set_member_active($1, false)', [M.noah], denied);
-    await s.fails('select public.set_member_vessels($1, $2)', [M.noah, [V.coral]], denied);
+    await s.fails('select public.assign_member_to_vessel($1, $2)', [M.noah, V.biscayne], denied);
+    await s.fails('select public.remove_member_from_vessel($1, $2)', [M.noah, V.coral], denied);
     await s.fails('select public.create_vessel($1, $2, $3)', ['MV X', '1234567', 'Tender'], denied);
     await s.fails('select public.set_vessel_active($1, false)', [V.keys], denied);
     await s.fails('select public.reset_demo_data()', [], denied);
@@ -79,7 +80,11 @@ test('crew holding active work orders cannot be deactivated, re-roled or removed
       /Cannot change the role of Zoe Park: they still hold 1 active/,
     );
     await s.fails('select public.remove_member_from_vessel($1, $2)', [zoe, V.coral], /Cannot remove Zoe Park from this vessel/);
-    await s.fails('select public.set_member_vessels($1, $2)', [zoe, []], /still hold 1 active/);
+    await s.fails(
+      'select public.update_member($1, $2, $3, $4, $5)',
+      [zoe, 'Zoe Park', 'zoe.park@fleet.test', 'Crew', []],
+      /still hold 1 active/,
+    );
 
     // Once a captain reassigns the work, the member can be released.
     await s.actAs(M.elena);
@@ -129,7 +134,13 @@ test('Admins are fleet-wide: promotion clears assignments, assignment is refused
 test('vessel assignments: assign, move and remove', () =>
   asSession(pool, M.morgan, async (s) => {
     const zoe = await createMember(s, { vessels: [V.coral] });
-    await s.rows('select public.set_member_vessels($1, $2)', [zoe, [V.biscayne, V.keys]]);
+    await s.rows('select public.update_member($1, $2, $3, $4, $5)', [
+      zoe,
+      'Zoe Park',
+      'zoe.park@fleet.test',
+      'Crew',
+      [V.biscayne, V.keys],
+    ]);
     assert.deepEqual(await vesselIdsOf(s, zoe), [V.biscayne, V.keys].sort());
     await s.rows('select public.remove_member_from_vessel($1, $2)', [zoe, V.keys]);
     assert.deepEqual(await vesselIdsOf(s, zoe), [V.biscayne]);

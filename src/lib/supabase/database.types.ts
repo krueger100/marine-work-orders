@@ -350,10 +350,6 @@ export type Database = {
         Args: { p_is_active: boolean; p_member_id: string };
         Returns: undefined;
       };
-      set_member_vessels: {
-        Args: { p_member_id: string; p_vessel_ids: string[] };
-        Returns: undefined;
-      };
       set_vessel_active: {
         Args: { p_is_active: boolean; p_vessel_id: string };
         Returns: undefined;

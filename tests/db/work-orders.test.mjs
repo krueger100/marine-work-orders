@@ -95,9 +95,10 @@ test('validation: title and issue are required', () =>
 test('only the assigned crew member can work a work order', () =>
   asSession(pool, M.elena, async (s) => {
     const id = await createWorkOrder(s, { assignee: M.noah });
+    // Other crew cannot see it, so to them it does not exist.
     for (const other of [M.ava, M.liam]) {
       await s.actAs(other);
-      await s.fails('select public.start_work_order($1)', [id], /Only the crew member assigned/);
+      await s.fails('select public.start_work_order($1)', [id], /Work order not found/);
     }
     await s.actAs(M.elena);
     await s.fails('select public.start_work_order($1)', [id], /requires the Crew role/);
@@ -123,8 +124,8 @@ test('reviews: only Done work orders, only captains of that vessel', () =>
     await s.rows('select public.start_work_order($1)', [id]);
     await s.rows('select public.complete_work_order($1, $2)', [id, 'Fixed']);
     await s.fails('select public.attest_work_order($1)', [id], /requires the Captain role/);
-    await s.actAs(M.james); // captain of Biscayne, not Coral
-    await s.fails('select public.attest_work_order($1)', [id], /Only a captain of this vessel/);
+    await s.actAs(M.james); // captain of Biscayne, not Coral: cannot see it
+    await s.fails('select public.attest_work_order($1)', [id], /Work order not found/);
   }));
 
 test('reassigning moves visibility to the new crew member', () =>
