@@ -3,7 +3,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useSession } from "@/components/session/session-provider";
-import { toAppError } from "@/lib/api/errors";
+import { errorMessage, toAppError } from "@/lib/api/errors";
 import { getSupabase, type AppSupabaseClient } from "@/lib/supabase/client";
 
 /** Query-key roots; every key is [root, actingMemberId, ...params]. */
@@ -44,7 +44,7 @@ export function useAppMutation<TVars, TResult = void>(
     onError: (error) => {
       const appError = toAppError(error);
       if (appError.isSessionLost) session.recoverLostSession();
-      else toast.error(appError.message);
+      else toast.error(errorMessage(appError)); // auth failures also trigger recovery (see Providers)
     },
   });
 }

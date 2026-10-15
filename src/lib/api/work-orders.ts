@@ -60,11 +60,11 @@ export async function listWorkOrders(
   if (term) query = query.ilike("title", `%${term}%`);
 
   const from = page * WORK_ORDER_PAGE_SIZE;
-  const { data, error, count } = await query
+  const { data, error, count, status } = await query
     .order("id", { ascending: false })
     .range(from, from + WORK_ORDER_PAGE_SIZE - 1);
 
-  return { rows: unwrap({ data, error }) as unknown as WorkOrderListItem[], total: count ?? 0 };
+  return { rows: unwrap({ data, error, status }) as unknown as WorkOrderListItem[], total: count ?? 0 };
 }
 
 const DETAIL_COLUMNS = `

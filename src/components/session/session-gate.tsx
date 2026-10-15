@@ -10,7 +10,7 @@ export function SessionGate({ children }: { children: React.ReactNode }) {
   const { status, error, member, retry } = useSession();
 
   if (status === "error") {
-    return <ErrorState message={`Could not connect to the database. ${error ?? ""}`} onRetry={retry} />;
+    return <ErrorState title="Could not start a session" message={error ?? undefined} onRetry={retry} />;
   }
   if (status === "loading") {
     return (

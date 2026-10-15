@@ -31,12 +31,12 @@ export async function listMembers(
 
   const from = page * MEMBER_PAGE_SIZE;
   // Enum order: Admins, then Captains, then Crew; alphabetical within a role.
-  const { data, error, count } = await query
+  const { data, error, count, status: httpStatus } = await query
     .order("role")
     .order("full_name")
     .range(from, from + MEMBER_PAGE_SIZE - 1);
 
-  const rows = unwrap({ data, error }).map(({ vessel_assignments, ...member }) => ({
+  const rows = unwrap({ data, error, status: httpStatus }).map(({ vessel_assignments, ...member }) => ({
     ...member,
     vessel_ids: vessel_assignments.map((a) => a.vessel_id),
   }));

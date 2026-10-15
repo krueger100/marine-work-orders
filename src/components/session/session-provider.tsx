@@ -3,8 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { errorMessage } from "@/lib/api/errors";
-import { actAs, ensureTabSession, fetchDirectory, fetchWhoami } from "@/lib/api/session";
+import { onAuthFailure, reportAuthFailure } from "@/lib/api/auth-events";
+import { errorMessage, toAppError } from "@/lib/api/errors";
+import { actAs, ensureTabSession, fetchDirectory, fetchWhoami, resetTabSession } from "@/lib/api/session";
 import { loadSelection, resolveSelection, saveSelection, type Selection } from "@/lib/session-rules";
 import { getSupabase } from "@/lib/supabase/client";
 import type { ActingMember, Directory, Role, VesselScope } from "@/lib/types";
@@ -57,6 +58,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   // Member switches run one at a time; only the latest request wins.
   const switchQueue = useRef<Promise<void>>(Promise.resolve());
   const requestedMemberId = useRef<string | null>(null);
+  // Session recovery runs once at a time and at most every 30 seconds.
+  const recovering = useRef<Promise<void> | null>(null);
+  const lastRecoveryAt = useRef(0);
 
   const switchTo = useCallback(
     (memberId: string) => {
@@ -71,7 +75,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           // Drop cached data that belonged to other identities.
           queryClient.removeQueries({ predicate: (q) => q.queryKey[1] !== confirmed.id });
         } catch (e) {
-          toast.error(errorMessage(e));
+          if (toAppError(e).isAuthFailure) reportAuthFailure(); // recovery re-acts as this member
+          else toast.error(errorMessage(e));
         } finally {
           if (requestedMemberId.current === memberId) setSwitching(false);
         }
@@ -91,24 +96,37 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   // Bootstrap: own anonymous session -> directory -> restore or default selection.
+  // If the stored session is rejected by the server, start a fresh one once.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const supabase = getSupabase();
-        await ensureTabSession(supabase);
-        const dir = await fetchDirectory(supabase);
-        if (cancelled) return;
-        setDirectory(dir);
-        const initial = resolveSelection(dir, loadSelection() ?? {});
-        setSelection(initial);
-        if (initial) {
-          requestedMemberId.current = initial.memberId;
-          const confirmed = await actAs(supabase, initial.memberId);
-          if (cancelled) return;
-          setMember(confirmed);
-          saveSelection(initial);
+        const connect = async () => {
+          await ensureTabSession(supabase);
+          const dir = await fetchDirectory(supabase);
+          const initial = resolveSelection(dir, loadSelection() ?? {});
+          const confirmed = initial ? await actAs(supabase, initial.memberId) : null;
+          return { dir, initial, confirmed };
+        };
+
+        let result: Awaited<ReturnType<typeof connect>>;
+        try {
+          result = await connect();
+        } catch (e) {
+          if (!toAppError(e).isAuthFailure) throw e;
+          await resetTabSession(supabase);
+          result = await connect();
         }
+        if (cancelled) return;
+
+        setDirectory(result.dir);
+        setSelection(result.initial);
+        if (result.initial) {
+          requestedMemberId.current = result.initial.memberId;
+          saveSelection(result.initial);
+        }
+        setMember(result.confirmed);
         setStatus("ready");
       } catch (e) {
         if (cancelled) return;
@@ -167,7 +185,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         apply(resolveSelection(dir, { vessel: selection?.vessel, role: selection?.role }));
       }
     } catch (e) {
-      toast.error(errorMessage(e));
+      if (toAppError(e).isAuthFailure) reportAuthFailure();
+      else toast.error(errorMessage(e));
     }
   }, [apply, selection]);
 
@@ -176,6 +195,36 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     requestedMemberId.current = null;
     void refresh();
   }, [refresh]);
+
+  // The server rejected this tab's session (revoked, tampered or expired beyond
+  // refresh): start a fresh anonymous session and act as the same member again.
+  const recoverAuth = useCallback((): Promise<void> => {
+    if (recovering.current) return recovering.current;
+    if (Date.now() - lastRecoveryAt.current < 30_000) return Promise.resolve(); // avoid a sign-in loop
+    lastRecoveryAt.current = Date.now();
+
+    recovering.current = (async () => {
+      try {
+        const supabase = getSupabase();
+        await resetTabSession(supabase);
+        const memberId = requestedMemberId.current;
+        if (memberId) setMember(await actAs(supabase, memberId));
+        await queryClient.invalidateQueries();
+      } catch (e) {
+        const appError = toAppError(e);
+        if (appError.isAuthFailure || appError.isNetworkFailure || appError.isRateLimited) {
+          toast.error(errorMessage(appError));
+        } else {
+          recoverLostSession(); // e.g. the member was deactivated meanwhile
+        }
+      } finally {
+        recovering.current = null;
+      }
+    })();
+    return recovering.current;
+  }, [queryClient, recoverLostSession]);
+
+  useEffect(() => onAuthFailure(() => void recoverAuth()), [recoverAuth]);
 
   // Another admin (or another tab) may have changed things: re-sync on focus.
   useEffect(() => {

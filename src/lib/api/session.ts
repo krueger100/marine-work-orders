@@ -25,6 +25,26 @@ export function ensureTabSession(supabase: AppSupabaseClient): Promise<Session> 
   return sessionPromise;
 }
 
+let resetPromise: Promise<Session> | null = null;
+
+/**
+ * Discards this tab's session (rejected by the server: revoked, tampered or
+ * expired beyond refresh) and starts a fresh anonymous one. Concurrent callers
+ * share a single reset.
+ */
+export function resetTabSession(supabase: AppSupabaseClient): Promise<Session> {
+  resetPromise ??= (async () => {
+    sessionPromise = null;
+    // Local sign-out only clears this tab's storage; the server may already
+    // consider the token invalid, so a failure here is expected and ignored.
+    await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    return ensureTabSession(supabase);
+  })().finally(() => {
+    resetPromise = null;
+  });
+  return resetPromise;
+}
+
 async function startTabSession(supabase: AppSupabaseClient): Promise<Session> {
   let {
     data: { session },

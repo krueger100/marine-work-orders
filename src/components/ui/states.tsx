@@ -12,21 +12,23 @@ export function Spinner({ label = "Loading", className }: { label?: string; clas
   );
 }
 
-export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+export function EmptyState({ title, children, action }: { title: string; children?: ReactNode; action?: ReactNode }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-6 py-12 text-center">
       <Inbox className="size-8 text-slate-300" aria-hidden />
       <p className="font-medium text-slate-700">{title}</p>
       {children && <div className="max-w-sm text-sm text-slate-500">{children}</div>}
+      {action && <div className="mt-2">{action}</div>}
     </div>
   );
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorState({ title, message, onRetry }: { title?: string; message?: string; onRetry?: () => void }) {
   return (
     <div role="alert" className="flex flex-col items-center justify-center gap-3 px-6 py-12 text-center">
       <AlertTriangle className="size-8 text-amber-500" aria-hidden />
-      <p className="max-w-md text-sm text-slate-700">{message}</p>
+      {title && <p className="font-medium text-slate-800">{title}</p>}
+      {message && <p className="max-w-md text-sm text-slate-700">{message}</p>}
       {onRetry && (
         <Button variant="secondary" size="sm" onClick={onRetry}>
           Try again
